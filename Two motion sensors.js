@@ -2,7 +2,8 @@
 / The difference to the original script from the Shelly Library called "BLE in Scripting - Shelly BLU
 / Motion script actions" is that the relais turnes off only when both motion sensors report "no motion".
 / In the original script one motion sensor reporting "no motion" turned the relais off. 
-/ The part after "STOP CHANGE HERE" is identical to the original script!
+/ The part after "STOP CHANGE HERE" is identical to the original script
+/ (https://github.com/ALLTERCO/shelly-script-examples/blob/main/ble-shelly-motion.js)! 
 
 /******************* START CHANGE HERE *******************/
 let CONFIG = {
