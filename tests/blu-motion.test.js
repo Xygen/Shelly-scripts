@@ -40,7 +40,7 @@ function run(startOn=false,timing=false,configuredSensors=null) {
    bytes.push(0x21,motion);
    if(options.battery!==undefined)bytes.push(0x01,options.battery);
    if(options.lux!==undefined)bytes.push(0x05,options.lux&255,(options.lux>>8)&255,(options.lux>>16)&255);
-   receiver(2,{addr:MACS[sensor],rssi:-67,service_data:{fcd2:String.fromCharCode(...bytes)}});
+   receiver(2,{addr:options.addr || MACS[sensor],rssi:-67,service_data:{fcd2:String.fromCharCode(...bytes)}});
  }
  return {packet,calls,published,logs,tick:()=>periodic(),advance:ms=>{now+=ms;},get output(){return output;}};
 }
@@ -77,7 +77,8 @@ test('four configured sensors also work without a hard-coded maximum',()=>{
  const sensors=[...MACS,extra].map((mac,index)=>({name:'Sensor '+index,mac}));
  const x=run(false,false,sensors);
  assert.ok(x.logs.some(line=>line.includes('started with 4 sensor(s)')));
- x.packet(0,1,1);assert.equal(x.output,true);
+ x.packet(3,1,1,{addr:extra});assert.equal(x.output,true);
+ x.packet(3,2,0,{addr:extra});assert.equal(x.output,false);
 });
 test('empty configuration does not initialize BLE or operate the relay',()=>{
  const x=run(true,false,[]);
