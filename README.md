@@ -2,6 +2,8 @@
 
 JavaScript examples for Shelly devices using Shelly Script.
 
+**Contribution and language policy:** All future documentation, code comments, and human-readable script output must be in **English**. See [Repository contribution and language rules](AGENTS.md). Historical text remains untouched until revised.
+
 ## Three BLU motion sensors — `blu-motion.js`
 
 [View the script](blu-motion.js)
