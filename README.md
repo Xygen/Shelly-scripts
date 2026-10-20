@@ -32,6 +32,7 @@ Controls relay `Switch 0` on a Shelly **1PM Mini Gen3** from up to three **Shell
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `debug` | `false` | Enable verbose console diagnostics |
+| `diagnoseMotionTiming` | `false` | Optional gap/RSSI/battery logs per accepted motion report |
 | `activeScan` | `false` | Passive Bluetooth scanning |
 | `maxActiveAgeMs` | `900000` | Expiry for a previously active motion state |
 | `checkIntervalMs` | `10000` | Periodic relay reconciliation and expiry check |
@@ -51,6 +52,18 @@ Controls relay `Switch 0` on a Shelly **1PM Mini Gen3** from up to three **Shell
 
 ### Notes on the transition
 
-The newer script adds a third motion sensor, independent per-sensor duplicate filtering, uniform MAC normalization, a configurable active-state expiry, conditional relay changes with RPC error reporting, and a corrected BTHome button field width (`uint16`). It also retains the per-sensor MQTT illuminance topic pattern.
+The newer script adds a third motion sensor, independent per-sensor duplicate filtering, uniform MAC normalization, a configurable active-state expiry, conditional relay changes with RPC error reporting, and a BTHome v2 button event field width of one byte (`uint8`). It also retains the per-sensor MQTT illuminance topic pattern.
 
 **Rollback:** Stop the new script and restore/start the previous on-device script backup. The archived GitHub two-sensor example contains sample MAC addresses and is not necessarily an exact copy of an individual device's prior running configuration.
+
+### Motion timing investigation
+
+Temporarily set `diagnoseMotionTiming: true` in `CONFIG` and inspect the Shelly script log. A `TIMING` line shows the sensor name, its motion state, the milliseconds since its preceding accepted motion-status report (`gapMs`, or `first`), BLE RSSI and the battery level if included in that particular packet. This does **not** change relay behavior.
+
+**Known limitation:** the 15-minute fallback timeout is unchanged. When a sensor extends its internal blind time without broadcasting fresh motion packets, the saved ON state can expire even though someone is present. Before adjusting that timeout or using Beacon mode, collect representative motion timing logs for all three sensors. Do not assume silence proves a sensor failed.
+
+### Offline regression tests
+
+Run `node tests/blu-motion.test.js` to execute the simulated BTHome packet/relay tests. They mock Shelly APIs, including the device-specific binary-string behavior, and cannot substitute for a hardware/firmware test.
+
+Protocol reference: [BTHome v2](https://bthome.io/format/).
