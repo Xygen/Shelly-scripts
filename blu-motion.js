@@ -1,37 +1,36 @@
 /*
- * Shelly 1PM Mini Gen3 - 3 BLU-Bewegungsmelder (BTHome v2)
- * Geeignet als Ersatz des bereitgestellten Skripts.
- * Verwendet die dokumentierten Shelly-Script-APIs.
+ * Shelly BLU Motion relay control (BTHome v2).
+ * Compatible with Shelly devices supporting Scripts, BLE scanning, and Switch 0.
+ * Configure one or more motion sensors in CONFIG.sensors.
  *
- * Verhalten:
- * - Mindestens ein Sensor meldet Bewegung -> Relais EIN.
- * - Alle drei Sensoren melden keine Bewegung -> Relais AUS.
- * - Fehlende Bewegung-AUS-Meldung: aktiver Sensorstatus verfällt
- *   nach maxActiveAgeMs ohne neue Bewegungsstatusmeldung.
- * - Keine zusaetzliche normale Nachlaufzeit.
- * - Helligkeit bleibt unter <mac>/illuminance per MQTT verfuegbar.
+ * Behavior:
+ * - Any configured sensor reports motion -> relay ON.
+ * - No configured sensor has active motion -> relay OFF.
+ * - A motion-ON state expires after maxActiveAgeMs without a new motion report.
+ * - No additional normal switch-off delay.
+ * - Illuminance is published on <mac>/illuminance via MQTT, if connected.
  */
 
 var CONFIG = {
   debug: false,
-  diagnoseMotionTiming: false, // Optional: zeitliche Bewegungsmeldungen protokollieren
+  diagnoseMotionTiming: false, // Optionally log motion-report timing
   activeScan: false,
 
-  // Muss laenger sein als die maximale eingestellte BLU Motion Blind Time
-  // (laut Shelly-Dokumentation: maximal 600 Sekunden).
+  // Must exceed the BLU Motion blind time (up to 600 seconds).
   maxActiveAgeMs: 15 * 60 * 1000,
   checkIntervalMs: 10 * 1000,
   duplicateWindowMs: 2500,
 
-  // Example addresses only! Replace each MAC with the address of your own sensor.
+  // Add only the sensors paired with this Shelly; one entry is sufficient.
+  // Replace the sample MAC addresses before deployment.
   sensors: [
-    { name: "Oben",       mac: "aa:bb:cc:00:00:01" },
-    { name: "Unten neu",  mac: "aa:bb:cc:00:00:02" },
-    { name: "Unten alt",  mac: "aa:bb:cc:00:00:03" }
+    { name: "Sensor 1", mac: "aa:bb:cc:00:00:01" },
+    { name: "Sensor 2", mac: "aa:bb:cc:00:00:02" },
+    { name: "Sensor 3", mac: "aa:bb:cc:00:00:03" }
   ]
 };
 
-// Einfache BTHome-v2-Typentabelle. Alle Werte sind little-endian.
+// BTHome v2 data types; multibyte values are little-endian.
 var BTH = {
   0x00: { name: "pid",         len: 1 },
   0x01: { name: "battery",     len: 1 },
@@ -53,22 +52,34 @@ function debug(message) {
 }
 
 function initializeSensors() {
+  if (!Array.isArray(CONFIG.sensors)) {
+    console.log("ERROR: CONFIG.sensors must be an array");
+    return 0;
+  }
+  var count = 0;
   for (var i = 0; i < CONFIG.sensors.length; i++) {
     var item = CONFIG.sensors[i];
+    if (!item || typeof item.mac !== "string" ||
+        !/^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(item.mac)) {
+      console.log("WARN: Invalid sensor MAC address at index " + i);
+      continue;
+    }
     var mac = item.mac.toLowerCase();
     if (typeof states[mac] !== "undefined") {
-      console.log("WARN: Doppelte Sensoradresse: " + mac);
+      console.log("WARN: Duplicate sensor MAC address: " + mac);
       continue;
     }
     states[mac] = {
       name: item.name,
-      motion: null,            // null = noch nicht bekannt / veraltet
+      motion: null,            // null = unknown or expired
       lastMotionAt: null,
       lastSeenAt: null,
       lastPid: null,
       lastPidAt: null
     };
+    count++;
   }
+  return count;
 }
 
 function parseBTHome(raw) {
@@ -110,13 +121,13 @@ function desiredRelayState() {
 }
 
 function updateRelay() {
-  // Nach Skript-Neustart keinen unbekannten Status zwangsweise schalten.
+  // Do not force a relay state before the first motion report after startup.
   if (!hasMotionReport || relayCallInProgress) return;
 
   var desired = desiredRelayState();
   var status = Shelly.getComponentStatus("switch", 0);
   if (status === null || typeof status.output !== "boolean") {
-    console.log("WARN: Relaisstatus nicht lesbar");
+    console.log("WARN: Relay status unavailable");
     return;
   }
   if (status.output === desired) return;
@@ -126,23 +137,23 @@ function updateRelay() {
     relayCallInProgress = false;
     if (errorCode !== 0) {
       console.log("ERROR: Switch.Set: " + errorCode + " / " + errorMessage);
-      // Ein neuer Versuch erfolgt durch den periodischen Check.
+      // The periodic check retries the desired state.
       return;
     }
-    console.log("Relais " + (desired ? "EIN" : "AUS"));
-    // Wenn sich der Sollzustand inzwischen geaendert hat, nachsteuern.
+    console.log("Relay " + (desired ? "ON" : "OFF"));
+    // Reconcile if the desired state changed during the RPC call.
     if (desiredRelayState() !== desired) updateRelay();
   });
 }
 
 function publishIlluminance(mac, value) {
-  // Das vorhandene Topic-Format bleibt erhalten.
+  // Preserve the existing MQTT topic format.
   if (!MQTT.isConnected()) {
-    debug("MQTT nicht verbunden; Helligkeit verworfen: " + mac);
+    debug("MQTT disconnected; illuminance dropped: " + mac);
     return;
   }
   if (!MQTT.publish(mac + "/illuminance", String(value))) {
-    console.log("WARN: MQTT.publish fehlgeschlagen: " + mac);
+    console.log("WARN: MQTT.publish failed: " + mac);
   }
 }
 
@@ -159,8 +170,8 @@ function onScanEvent(event, result) {
   var now = Shelly.getUptimeMs();
   state.lastSeenAt = now;
 
-  // Duplikate PRO Sensor. Das Zeitfenster verhindert dauerhafte Sperren
-  // nach Neustart des Sensors oder Umlauf des 8-Bit-Paketzählers.
+  // Per-sensor duplicate filtering with a short window prevents
+  // permanent suppression after a sensor restart or PID wraparound.
   if (typeof data.pid === "number") {
     if (state.lastPid === data.pid && state.lastPidAt !== null &&
         now - state.lastPidAt >= 0 &&
@@ -180,7 +191,7 @@ function onScanEvent(event, result) {
                   " battery=" + (typeof data.battery === "number" ? data.battery : "unknown"));
     }
     if (state.motion !== motion) {
-      console.log("Bewegung " + state.name + ": " + (motion ? "JA" : "NEIN"));
+      console.log("Motion " + state.name + ": " + (motion ? "YES" : "NO"));
     }
     state.motion = motion;
     state.lastMotionAt = now;
@@ -198,35 +209,39 @@ function periodicCheck() {
   var now = Shelly.getUptimeMs();
   for (var mac in states) {
     var state = states[mac];
-    // BLU Motion sendet unter normalen Bedingungen nach Ablauf der Blind
-    // Time 'no motion'. Diese Absicherung greift nur bei fehlender Meldung.
+    // The motion-OFF advertisement can be missed; expire stale active states
+    // as a fallback. Long uninterrupted motion may also trigger this expiry.
     if (state.motion === true && state.lastMotionAt !== null &&
         now - state.lastMotionAt > CONFIG.maxActiveAgeMs) {
       state.motion = null;
-      console.log("WARN: Bewegungsstatus veraltet: " + state.name +
-                  "; wird fuer die Schaltentscheidung ignoriert");
+      console.log("WARN: Motion state expired: " + state.name +
+                  "; treating as inactive");
     }
   }
-  updateRelay(); // Korrigiert auch extern veraenderte Relaiszustände.
+  updateRelay(); // Also reconciles externally changed relay states.
 }
 
 function init() {
-  initializeSensors();
-
-  var bleConfig = Shelly.getComponentConfig("ble");
-  // Firmware < 2.0.0 hat 'enable'; ab 2.0.0 entfallen.
-  if (bleConfig !== null && bleConfig.enable === false) {
-    console.log("ERROR: Bluetooth in den Geraeteeinstellungen deaktiviert");
+  var sensorCount = initializeSensors();
+  if (sensorCount === 0) {
+    console.log("ERROR: No valid motion sensors configured; script not started");
     return;
   }
 
-  // Alte und neue Schreibweise der Shelly BLE-Scanner-API unterstuetzen.
+  var bleConfig = Shelly.getComponentConfig("ble");
+  // Firmware before 2.0.0 exposes 'enable'; newer releases omit it.
+  if (bleConfig !== null && bleConfig.enable === false) {
+    console.log("ERROR: Bluetooth is disabled in device settings");
+    return;
+  }
+
+  // Support the legacy and newer Shelly BLE Scanner API spellings.
   if (typeof BLE.Scanner.subscribe === "function") {
     BLE.Scanner.subscribe(onScanEvent);
   } else if (typeof BLE.Scanner.Subscribe === "function") {
     BLE.Scanner.Subscribe(onScanEvent);
   } else {
-    console.log("ERROR: BLE.Scanner.subscribe nicht verfuegbar");
+    console.log("ERROR: BLE.Scanner.subscribe is unavailable");
     return;
   }
 
@@ -245,13 +260,13 @@ function init() {
       return;
     }
     if (!started) {
-      console.log("ERROR: BLE-Scan konnte nicht gestartet werden");
+      console.log("ERROR: BLE scan could not be started");
       return;
     }
   }
 
   Timer.set(CONFIG.checkIntervalMs, true, periodicCheck);
-  console.log("3-Sensor-Bewegungssteuerung gestartet");
+  console.log("Motion control started with " + sensorCount + " sensor(s)");
 }
 
 init();
