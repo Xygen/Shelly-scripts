@@ -14,6 +14,7 @@
 
 var CONFIG = {
   debug: false,
+  diagnoseMotionTiming: false, // Optional: zeitliche Bewegungsmeldungen protokollieren
   activeScan: false,
 
   // Muss laenger sein als die maximale eingestellte BLU Motion Blind Time
@@ -39,7 +40,7 @@ var BTH = {
   0x05: { name: "illuminance", len: 3, factor: 0.01 },
   0x21: { name: "motion",      len: 1 },
   0x2d: { name: "window",      len: 1 },
-  0x3a: { name: "button",      len: 2 },
+  0x3a: { name: "button",      len: 1 }, // BTHome v2: 1-byte event
   0x3f: { name: "rotation",    len: 2, signed: true, factor: 0.1 }
 };
 
@@ -172,6 +173,12 @@ function onScanEvent(event, result) {
 
   if (typeof data.motion === "number") {
     var motion = data.motion === 1;
+    if (CONFIG.diagnoseMotionTiming) {
+      var gap = state.lastMotionAt === null ? "first" : String(now - state.lastMotionAt);
+      console.log("TIMING " + state.name + " motion=" + (motion ? "1" : "0") +
+                  " gapMs=" + gap + " rssi=" + result.rssi +
+                  " battery=" + (typeof data.battery === "number" ? data.battery : "unknown"));
+    }
     if (state.motion !== motion) {
       console.log("Bewegung " + state.name + ": " + (motion ? "JA" : "NEIN"));
     }
