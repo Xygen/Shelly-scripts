@@ -51,16 +51,28 @@ function debug(message) {
   if (CONFIG.debug) console.log("DEBUG: " + message);
 }
 
+function isValidMac(mac) {
+  if (typeof mac !== "string" || mac.length !== 17) return false;
+  for (var p = 0; p < 17; p++) {
+    var c = mac.slice(p, p + 1);
+    if (p % 3 === 2) {
+      if (c !== ":") return false;
+    } else if ("0123456789abcdefABCDEF".indexOf(c) === -1) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function initializeSensors() {
-  if (!Array.isArray(CONFIG.sensors)) {
+  if (!CONFIG.sensors || typeof CONFIG.sensors.length !== "number") {
     console.log("ERROR: CONFIG.sensors must be an array");
     return 0;
   }
   var count = 0;
   for (var i = 0; i < CONFIG.sensors.length; i++) {
     var item = CONFIG.sensors[i];
-    if (!item || typeof item.mac !== "string" ||
-        !/^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(item.mac)) {
+    if (!item || !isValidMac(item.mac)) {
       console.log("WARN: Invalid sensor MAC address at index " + i);
       continue;
     }
@@ -93,8 +105,8 @@ function parseBTHome(raw) {
     var type = raw.at(pos++);
     var def = BTH[type];
     if (typeof def === "undefined") {
-      debug("Unbekanntes BTHome-Feld 0x" + type.toString(16));
-      break; // Bereits gelesene Felder bleiben nutzbar.
+      debug("Unknown BTHome field 0x" + type.toString(16));
+      break; // Keep any fields already decoded.
     }
     if (pos + def.len > raw.length) return null;
 
@@ -256,7 +268,7 @@ function init() {
     } else if (typeof BLE.Scanner.Start === "function") {
       started = BLE.Scanner.Start(opts);
     } else {
-      console.log("ERROR: BLE.Scanner.start nicht verfuegbar");
+      console.log("ERROR: BLE.Scanner.start is unavailable");
       return;
     }
     if (!started) {
