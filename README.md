@@ -4,14 +4,14 @@ JavaScript examples for Shelly devices using Shelly Script.
 
 **Contribution and language policy:** All future documentation, code comments, and human-readable script output must be in **English**. See [Repository contribution and language rules](AGENTS.md). Historical text remains untouched until revised.
 
-## Three BLU motion sensors — `blu-motion.js`
+## Configurable BLU Motion relay control — `blu-motion.js`
 
 [View the script](blu-motion.js)
 
-Controls relay `Switch 0` on a Shelly **1PM Mini Gen3** from up to three **Shelly BLU Motion** sensors (unencrypted BTHome v2 advertisements).
+Controls relay `Switch 0` on a compatible Shelly from **one or more Shelly BLU Motion** sensors (unencrypted BTHome v2 advertisements). The configuration is an array; there is no hard-coded requirement to use exactly three sensors. The currently confirmed deployment uses a Shelly **1PM Mini Gen3**.
 
 **Logic**
-- Relay **ON** when at least one configured sensor reports motion.
+- Relay **ON** when at least one configured sensor reports motion, including with only one configured sensor.
 - Relay **OFF** when no sensor has a valid active motion state.
 - Sensor states are tracked separately, including each sensor's Bluetooth packet ID, so matching packet IDs from different devices are not treated as duplicates.
 - A motion-ON state expires after **15 minutes** without another motion-status advertisement (`maxActiveAgeMs`). Expired states are treated as unknown, not active. This prevents an indefinitely active relay after a missed motion-OFF advertisement, but may turn the light off if BLE messages are lost.
@@ -22,12 +22,43 @@ Controls relay `Switch 0` on a Shelly **1PM Mini Gen3** from up to three **Shell
 ### Setup
 
 1. Back up the current script in the Shelly web interface before replacing it.
-2. Open `blu-motion.js`, and **replace all three example MAC addresses** in `CONFIG.sensors` with those from your sensors.
+2. Open `blu-motion.js`, replace the sample MAC addresses in `CONFIG.sensors`, and **remove unused sensor entries**. For a one-sensor installation, configure exactly one entry.
 3. Paste the code into a Shelly Script on the target device, save, and start it. Enable automatic start if desired.
-4. Test each sensor individually and together, including motion-OFF and the fallback timeout behavior.
+4. Test every configured sensor, including motion-ON, motion-OFF, and fallback timeout behavior. On multisensor installations, confirm that one active sensor keeps the relay on.
 5. For illuminance MQTT output, configure and connect the Shelly's MQTT client.
 
-> **Privacy:** This public repository deliberately contains example MAC addresses, not the real addresses of the installed motion sensors. Copying the file without changing them will **not** control your sensors.
+> **Privacy:** This public repository deliberately contains example MAC addresses, not the real addresses of installed motion sensors. Copying the file without replacing the relevant addresses will **not** control your sensors.
+
+### Sensor count and reuse on other Shelly devices
+
+The **same source file** must support **1, 2, 3 or more configured BLE motion sensors**. Only `CONFIG.sensors` needs to change between installations; do not create or maintain separate scripts based solely on sensor count.
+
+Single sensor (for a room with one BLU Motion):
+
+```javascript
+sensors: [
+  { name: "Utility room", mac: "aa:bb:cc:00:00:01" }
+]
+```
+
+Three sensors (for larger spaces or different detection angles):
+
+```javascript
+sensors: [
+  { name: "Upper", mac: "aa:bb:cc:00:00:01" },
+  { name: "Lower A", mac: "aa:bb:cc:00:00:02" },
+  { name: "Lower B", mac: "aa:bb:cc:00:00:03" }
+]
+```
+
+- With **one** sensor, its motion-ON message turns the relay on; its motion-OFF message turns the relay off.
+- With **multiple** sensors, the relay remains on while **any** configured sensor reports active motion.
+- Messages from unconfigured Bluetooth devices are ignored.
+- MAC addresses are normalized to lowercase; duplicate or malformed addresses are skipped with an English warning.
+- If **no valid sensor** remains, the script reports an error and does not initialize scanning or switch the relay.
+- Use one instance of this script per target relay; do **not** run two independently controlling scripts on the same relay.
+- There is no artificial code-level sensor-count limit. Practical limits depend on the device's available memory, firmware and Bluetooth environment.
+- The configured display `name` is used in logs; it does not need to match an entity name in Home Assistant.
 
 ### Configuration
 
@@ -42,7 +73,7 @@ Controls relay `Switch 0` on a Shelly **1PM Mini Gen3** from up to three **Shell
 
 ### Compatibility and limitations
 
-- Designed for the **Shelly 1PM Mini Gen3** and Shelly Script API. The three-sensor setup has been **reported working in everyday use**, but this repository does not include hardware integration tests.
+- Confirmed use case: **Shelly 1PM Mini Gen3** with three sensors. Reuse on other Shelly models requires Shelly Script support, BLE scanning, and a compatible `Switch 0` relay interface; hardware compatibility must be verified for each device. Other hardware is not yet validated.
 - The device's firmware is reported as **Shelly OS 2.1.0** via Home Assistant. Compatibility with other releases must be tested.
 - BTHome encrypted advertisements are not supported.
 - Sensor silence alone does **not** indicate an outage while a sensor is reporting no motion; the timeout only expires a previously active motion state.
@@ -54,7 +85,7 @@ Controls relay `Switch 0` on a Shelly **1PM Mini Gen3** from up to three **Shell
 
 ### Notes on the transition
 
-The newer script adds a third motion sensor, independent per-sensor duplicate filtering, uniform MAC normalization, a configurable active-state expiry, conditional relay changes with RPC error reporting, and a BTHome v2 button event field width of one byte (`uint8`). It also retains the per-sensor MQTT illuminance topic pattern.
+The newer script supports any number of configured motion sensors (including just one), independent per-sensor duplicate filtering, uniform MAC normalization, a configurable active-state expiry, conditional relay changes with RPC error reporting, and a BTHome v2 button event field width of one byte (`uint8`). It also retains the per-sensor MQTT illuminance topic pattern.
 
 **Rollback:** Stop the new script and restore/start the previous on-device script backup. The archived GitHub two-sensor example contains sample MAC addresses and is not necessarily an exact copy of an individual device's prior running configuration.
 
@@ -66,6 +97,6 @@ Temporarily set `diagnoseMotionTiming: true` in `CONFIG` and inspect the Shelly 
 
 ### Offline regression tests
 
-Run `node tests/blu-motion.test.js` to execute the simulated BTHome packet/relay tests. They mock Shelly APIs, including the device-specific binary-string behavior, and cannot substitute for a hardware/firmware test.
+Run `node tests/blu-motion.test.js` to execute the simulated BTHome packet/relay tests. They mock Shelly APIs and cover single-, two-, three- and four-sensor configurations, invalid configurations and the device-specific binary-string behavior. They cannot substitute for a hardware/firmware test.
 
 Protocol reference: [BTHome v2](https://bthome.io/format/).
